@@ -1,0 +1,54 @@
+name: Cloudflared SSH Tunnel V2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ssh-tunnel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH Server
+        run: |
+          sudo apt update -qq 2>/dev/null
+          sudo apt install -y openssh-server >/dev/null 2>&1
+          sudo service ssh start
+          
+          # Set password langsung untuk root
+          echo "root:Root123" | sudo chpasswd >/dev/null 2>&1
+          
+          # Konfigurasi SSH untuk root access
+          sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo service ssh restart >/dev/null 2>&1
+
+      - name: Install Cloudflared
+        run: |
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared >/dev/null 2>&1
+          sudo mv cloudflared /usr/local/bin/ >/dev/null 2>&1
+          sudo chmod +x /usr/local/bin/cloudflared >/dev/null 2>&1
+
+      - name: Setup Cloudflare Tunnel
+        env:
+          SSH_CREDENTIALS: ${{ secrets.SSH_CREDENTIALS }}
+        run: |
+          mkdir -p ~/.cloudflared
+          echo "${SSH_CREDENTIALS}" > ~/.cloudflared/ssh_tunnel.json
+          
+          # Jalankan tunnel di background
+          cloudflared tunnel --credentials-file ~/.cloudflared/ssh_tunnel.json run ssh >/dev/null 2>&1 &
+          sleep 10
+          
+          echo "=========================================="
+          echo "SSH TUNNEL CLOUDFLARE BERHASIL DIBUAT"
+          echo "User: root"
+          echo "Password: Root123"
+          echo "=========================================="
+          
+          # Pertahankan tunnel tetap hidup
+          while true; do
+            if ! pgrep cloudflared >/dev/null; then
+              cloudflared tunnel --credentials-file ~/.cloudflared/ssh_tunnel.json run ssh >/dev/null 2>&1 &
+              sleep 10
+            fi
+            sleep 60
+          done
